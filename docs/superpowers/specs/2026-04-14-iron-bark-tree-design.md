@@ -192,7 +192,7 @@ interface CamelNodeData {
   processorName: string;       // 'from', 'log', 'choice', 'when', etc.
   componentName?: string;      // 'timer', 'kafka', 'direct', etc.
   uri?: string;                // 'timer:foo?period=1000'
-  path: string;                // model path: 'route.from.steps[0]'
+  path: string;                // model path: 'route.from.steps.0.choice'
 }
 ```
 
@@ -204,13 +204,49 @@ function createCamelTree(source: string, format: 'yaml'): Tree<CamelNodeData>
 
 Returns a `Tree` with `type === 'camel'`.
 
+### Tree Construction (Two-Phase)
+
+Based on how Kaoto's `AbstractCamelVisualEntity.toVizNode()` works, tree construction follows two phases:
+
+**Phase 1: Recursive node creation via mappers**
+Each mapper recursively creates nodes for its processor and its children. Child relationships come in three types:
+- **branch**: Sequential steps array (e.g., `from.steps`, `when.steps`). Nodes are created and linked with prev/next.
+- **single-clause**: Optional single child (e.g., `choice.otherwise`, `doTry.doFinally`).
+- **array-clause**: Array of clause children (e.g., `choice.when[]`, `doTry.doCatch[]`).
+
+**Phase 2: Flattening and linking**
+The `from` node's children are promoted to be direct children of the route root. The `from` node becomes a leaf, and sequential prev/next links are established across the promoted children. This means the tree structure does not mirror YAML nesting — it's optimized for visualization.
+
+**Result for `from → log → choice(when, otherwise) → to`:**
+```
+route (group)
+ ├── from (leaf)           ←→ next/prev ←→
+ ├── log (leaf)            ←→ next/prev ←→
+ ├── choice (group)        ←→ next/prev ←→
+ │    ├── when[0] (group)
+ │    │    └── (steps inside when, linked sequentially)
+ │    ├── when[1] (group)
+ │    │    └── (steps inside when, linked sequentially)
+ │    └── otherwise (group)
+ │         └── (steps inside otherwise, linked sequentially)
+ └── to (leaf)
+
+Sequential chain: from ←→ log ←→ choice ←→ to
+Children of choice: when[0], when[1], otherwise (no prev/next between them)
+```
+
 ### Mapper Pattern
 
-Local to the camel package (not in core):
+Local to the camel package (not in core). Uses a registry with a default mapper and specialized overrides:
 
 ```typescript
 interface CamelNodeMapper {
-  map(path: string, definition: unknown): TreeNode<CamelNodeData>;
+  map(path: string, componentLookup: CamelComponentLookup, definition: unknown): TreeNode<CamelNodeData>;
+}
+
+interface CamelComponentLookup {
+  processorName: string;
+  componentName?: string;
 }
 
 class CamelMapperRegistry {
@@ -222,7 +258,19 @@ class CamelMapperRegistry {
 }
 ```
 
-Each processor type gets a mapper. The default mapper handles most processors; specialized mappers handle `choice`/`when`/`otherwise`, `doTry`/`doCatch`/`doFinally`, etc.
+**Specialized mappers (V1):**
+
+| Mapper | Processor | Behavior |
+|--------|-----------|----------|
+| DefaultMapper | Most processors | Creates node, recursively processes children based on child type (branch/single-clause/array-clause) |
+| ChoiceMapper | `choice` | Creates group with `when[]` (array-clause) and `otherwise` (single-clause) as children |
+| WhenMapper | `when` | Creates group, processes `steps` as branch |
+| OtherwiseMapper | `otherwise` | Creates group, processes `steps` as branch |
+| CircuitBreakerMapper | `circuitBreaker` | Creates group with `steps` (branch) and `onFallback` (single-clause) |
+| MulticastMapper | `multicast` | Creates group, explicitly removes prev/next links between children (parallel branches) |
+| LoadBalanceMapper | `loadBalance` | Same as multicast — parallel branches with no sequential links |
+
+**Key pattern from Kaoto:** Parallel processors (multicast, loadBalance) explicitly clear prev/next links between children. This is why sibling links must be explicit, not derived — some groups intentionally have unlinked children.
 
 ### Accessor Wiring
 
@@ -230,7 +278,7 @@ Mappers assign accessor functions during node creation:
 
 ```typescript
 new DefaultTreeNode<CamelNodeData>({
-  id: generateId(path),
+  id: path,  // path is the node ID (e.g., 'route.from.steps.0.log')
   nodeKind: hasChildren ? 'group' : 'leaf',
   data: { processorName: 'log', uri: 'log:myLogger', path },
   accessors: {
@@ -245,8 +293,13 @@ new DefaultTreeNode<CamelNodeData>({
 ### V1 Scope
 
 - YAML format only (XML is a future addition)
-- Core Camel YAML structures: `route`, `from`, `steps` (sequential processors), `choice`/`when`/`otherwise`
-- Basic EIP processors: `log`, `setHeader`, `to`, `setBody`, `marshal`/`unmarshal`
+- Route entities: `route` with `from` and `steps`
+- Branching: `choice`/`when`/`otherwise`
+- Error handling: `doTry`/`doCatch`/`doFinally`
+- Parallel: `multicast`, `loadBalance`
+- Resilience: `circuitBreaker`/`onFallback`
+- Basic processors: `log`, `setHeader`, `setBody`, `to`, `marshal`/`unmarshal`
+- NOT in V1: REST DSL, Kamelets, Pipes, routeConfiguration (these have different entity structures and can be added later)
 
 ## Citrus Package (`@iron-bark/tree-citrus`)
 
