@@ -435,6 +435,7 @@ __metadata:
     "@vitejs/plugin-react": "npm:^4.4.1"
     react: "npm:^19.1.0"
     react-dom: "npm:^19.1.0"
+    typescript: "npm:~5.8.3"
     vite: "npm:^6.3.2"
   languageName: unknown
   linkType: soft
