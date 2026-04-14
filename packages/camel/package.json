@@ -1,5 +1,5 @@
 {
-  "name": "@iron-bark/tree",
+  "name": "@iron-bark/tree-camel",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -10,5 +10,9 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@iron-bark/tree": "workspace:*",
+    "yaml": "^2.7.1"
   }
 }
