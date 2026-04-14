@@ -1,0 +1,16 @@
+{
+  "name": "@iron-bark/tree-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "yarn workspaces foreach -A --topological run build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "vitest": "~3.1.1"
+  }
+}
